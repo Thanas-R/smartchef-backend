@@ -5,7 +5,7 @@ import os
 from pydantic import BaseModel
 import google.generativeai as genai
 
-# --- FIXED PATH HANDLING ---
+# --- FIX PATH HANDLING ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RECIPES_PATH = os.path.join(BASE_DIR, "data", "recipes.json")
 INGREDIENTS_PATH = os.path.join(BASE_DIR, "data", "ingredients.json")
@@ -24,34 +24,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------- LOAD HELPERS ----------------------
+# ---------------------- JSON HELPERS ----------------------
 def load_json(path):
     if not os.path.exists(path):
         raise HTTPException(status_code=500, detail=f"File missing: {path}")
     try:
         with open(path, "r") as f:
             return json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail=f"Could not load {path}")
-
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading {path}: {str(e)}")
 
 def save_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error saving {path}: {str(e)}")
 
 # ---------------------- INGREDIENT LIST ----------------------
 @app.get("/api/ingredients")
 async def get_ingredients():
     data = load_json(INGREDIENTS_PATH)
-    return { "ingredients": data.get("ingredients", []) }
-
+    return {"ingredients": data.get("ingredients", [])}
 
 # ---------------------- RECIPE MATCHING ----------------------
 class MatchRequest(BaseModel):
     ingredients: list[str]
-
 
 @app.post("/api/recipes/match")
 async def recipe_match(req: MatchRequest):
@@ -67,7 +65,7 @@ async def recipe_match(req: MatchRequest):
         has = [i for i in recipe_ingredients if i in user_ing]
         missing = [i for i in recipe_ingredients if i not in user_ing]
 
-        match_percentage = int((len(has) / len(recipe_ingredients)) * 100)
+        match_percentage = int((len(has) / max(1, len(recipe_ingredients))) * 100)
 
         matches.append({
             "id": r.get("id"),
@@ -83,8 +81,7 @@ async def recipe_match(req: MatchRequest):
 
     matches = sorted(matches, key=lambda x: x["matchPercentage"], reverse=True)
 
-    return { "matches": matches }
-
+    return {"matches": matches}
 
 # ---------------------- AI INSTRUCTION GENERATION ----------------------
 class GenerateInstructions(BaseModel):
@@ -92,13 +89,37 @@ class GenerateInstructions(BaseModel):
     recipe_name: str
     ingredients: list[str]
 
-
 @app.post("/api/generate-instructions")
 async def generate_instructions(req: GenerateInstructions):
-    try:
-        data = load_json(RECIPES_PATH)
-        recipes = data.get("recipes", [])
+    data = load_json(RECIPES_PATH)
+    recipes = data.get("recipes", [])
 
-        recipe = next((r for r in recipes if r["id"] == req.recipe_id), None)
-        if not recipe:
-            r
+    recipe = next((r for r in recipes if str(r.get("id")) == str(req.recipe_id)), None)
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
+        prompt = f"""
+Generate simple step-by-step cooking instructions for:
+
+Recipe: {req.recipe_name}
+Ingredients: {', '.join(req.ingredients)}
+
+Return ONLY a numbered list.
+"""
+
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+
+        steps = [line.strip() for line in text.split("\n") if line.strip()]
+
+        recipe["instructions"] = steps
+
+        save_json(RECIPES_PATH, data)
+
+        return {"instructions": steps}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
