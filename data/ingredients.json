@@ -1,5 +1,6 @@
-[
-  "tomato",
+{
+  "ingredients": [
+    "tomato",
   "onion",
   "garlic",
   "potato",
@@ -680,4 +681,6 @@
   "paneer tikka masala",
   "tikka masala sauce",
   "butter chicken sauce"
-]
+  ]
+}
+
