@@ -1,15 +1,21 @@
-import os
-import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import json
+import os
 from pydantic import BaseModel
 import google.generativeai as genai
 
+# --- FIXED PATH HANDLING ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RECIPES_PATH = os.path.join(BASE_DIR, "data", "recipes.json")
+INGREDIENTS_PATH = os.path.join(BASE_DIR, "data", "ingredients.json")
+
+# --- Setup Gemini ---
+genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
+
 app = FastAPI()
 
-# -----------------------------
-#  CORS (allow frontend calls)
-# -----------------------------
+# Allow Vercel frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,121 +24,81 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------
-#  Load API Key
-# -----------------------------
-GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY")
 
-if not GEMINI_API_KEY:
-    raise Exception("Missing: GOOGLE_GEMINI_API_KEY environment variable")
-
-genai.configure(api_key=GEMINI_API_KEY)
-
-# -----------------------------
-#   Models
-# -----------------------------
-class IngredientsRequest(BaseModel):
-    ingredients: list[str]
-
-class GenerateInstructionsRequest(BaseModel):
-    recipe_id: str
-    recipe_name: str
-    ingredients: list[str]
-
-# -----------------------------
-#   Load Recipes Helper
-# -----------------------------
-def load_recipes():
+# ---------------------- LOAD HELPERS ----------------------
+def load_json(path):
+    if not os.path.exists(path):
+        raise HTTPException(status_code=500, detail=f"File missing: {path}")
     try:
-        with open("recipes.json", "r") as f:
+        with open(path, "r") as f:
             return json.load(f)
-    except:
-        raise HTTPException(status_code=500, detail="Could not load recipes.json")
+    except Exception:
+        raise HTTPException(status_code=500, detail=f"Could not load {path}")
 
-def save_recipes(data):
-    with open("recipes.json", "w") as f:
+
+def save_json(path, data):
+    with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
-# -----------------------------
-#   Get All Ingredients
-# -----------------------------
+
+# ---------------------- INGREDIENT LIST ----------------------
 @app.get("/api/ingredients")
 async def get_ingredients():
-    data = load_recipes()
-    ingredients = sorted({i for r in data["recipes"] for i in r["ingredients"]})
-    return {"ingredients": list(ingredients)}
+    data = load_json(INGREDIENTS_PATH)
+    return { "ingredients": data.get("ingredients", []) }
 
-# -----------------------------
-#   Find Matching Recipes
-# -----------------------------
+
+# ---------------------- RECIPE MATCHING ----------------------
+class MatchRequest(BaseModel):
+    ingredients: list[str]
+
+
 @app.post("/api/recipes/match")
-async def match_recipes(req: IngredientsRequest):
-    data = load_recipes()
-    given = set(i.lower() for i in req.ingredients)
+async def recipe_match(req: MatchRequest):
+    data = load_json(RECIPES_PATH)
+    recipes = data.get("recipes", [])
 
     matches = []
-    for r in data["recipes"]:
-        recipe_ingredients = set(i.lower() for i in r["ingredients"])
 
-        has = list(recipe_ingredients & given)
-        missing = list(recipe_ingredients - given)
+    for r in recipes:
+        recipe_ingredients = [i.lower() for i in r.get("ingredients", [])]
+        user_ing = [u.lower() for u in req.ingredients]
 
-        match_pct = int((len(has) / len(recipe_ingredients)) * 100)
+        has = [i for i in recipe_ingredients if i in user_ing]
+        missing = [i for i in recipe_ingredients if i not in user_ing]
+
+        match_percentage = int((len(has) / len(recipe_ingredients)) * 100)
 
         matches.append({
             "id": r.get("id"),
             "name": r.get("name"),
             "title": r.get("name"),
             "note": r.get("note"),
-            "ingredients": r["ingredients"],
+            "ingredients": recipe_ingredients,
+            "instructions": r.get("instructions", []),
             "hasIngredients": has,
             "missingIngredients": missing,
-            "matchPercentage": match_pct,
-            "instructions": r.get("instructions", [])
+            "matchPercentage": match_percentage
         })
 
-    matches.sort(key=lambda x: x["matchPercentage"], reverse=True)
-    return {"matches": matches}
+    matches = sorted(matches, key=lambda x: x["matchPercentage"], reverse=True)
 
-# -----------------------------
-#   Auto-Generate Instructions
-# -----------------------------
+    return { "matches": matches }
+
+
+# ---------------------- AI INSTRUCTION GENERATION ----------------------
+class GenerateInstructions(BaseModel):
+    recipe_id: str
+    recipe_name: str
+    ingredients: list[str]
+
+
 @app.post("/api/generate-instructions")
-async def generate_instructions(request: GenerateInstructionsRequest):
-    data = load_recipes()
-
-    recipe = next((r for r in data["recipes"] if r["id"] == request.recipe_id), None)
-    if not recipe:
-        raise HTTPException(status_code=404, detail="Recipe not found")
-
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
-    prompt = f"""
-Generate detailed, beginner-friendly step-by-step instructions for the recipe "{request.recipe_name}".
-
-Use these ingredients: {', '.join(request.ingredients)}
-
-Output ONLY a clean numbered list of steps.
-Each step must be a full sentence.
-"""
-
+async def generate_instructions(req: GenerateInstructions):
     try:
-        response = model.generate_content(prompt)
-        raw_text = response.text.strip()
+        data = load_json(RECIPES_PATH)
+        recipes = data.get("recipes", [])
 
-        steps = [
-            line.strip()
-            for line in raw_text.split("\n")
-            if line.strip() and not line.startswith("#")
-        ]
-
-        recipe["instructions"] = steps
-        save_recipes(data)
-
-        return {"instructions": steps}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
+        recipe = next((r for r in recipes if r["id"] == req.recipe_id), None)
+        if not recipe:
+            r
