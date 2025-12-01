@@ -10,7 +10,8 @@ import math
 # PATHS
 # ------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RECIPES_PATH = os.path.join(BASE_DIR, "recipes.json")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+RECIPES_PATH = os.path.join(DATA_DIR, "recipes.json")
 
 # ------------------------
 # FASTAPI APP
@@ -30,6 +31,7 @@ app.add_middleware(
 # ------------------------
 def load_recipes():
     if not os.path.exists(RECIPES_PATH):
+        print("❌ recipes.json NOT FOUND at:", RECIPES_PATH)
         return []
 
     with open(RECIPES_PATH, "r", encoding="utf-8") as f:
@@ -60,12 +62,6 @@ RECIPES = load_recipes()
 # ------------------------------------------------------------
 
 def text_to_vector(text: str):
-    """
-    Very lightweight vectorizer:
-    Convert text → bag-of-words frequency dict.
-    Example output:
-    {"egg": 2, "milk": 1, "salt": 1}
-    """
     words = text.lower().replace(",", " ").split()
     vec = {}
     for w in words:
@@ -74,16 +70,11 @@ def text_to_vector(text: str):
 
 
 def cosine_similarity(vec1: dict, vec2: dict):
-    """
-    Compute cosine similarity between bag-of-words vectors.
-    """
-    # dot product
     dot = 0
     for w in vec1:
         if w in vec2:
             dot += vec1[w] * vec2[w]
 
-    # magnitudes
     mag1 = math.sqrt(sum(v * v for v in vec1.values()))
     mag2 = math.sqrt(sum(v * v for v in vec2.values()))
 
@@ -144,7 +135,6 @@ def match_recipes(req: MatchRequest):
                 "matchPercentage": int(score * 100)
             })
 
-    # Sort highest match first
     results.sort(key=lambda x: x["matchPercentage"], reverse=True)
 
     return {"matches": results}
