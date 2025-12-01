@@ -1,11 +1,9 @@
 services:
   - type: web
     name: smartchef-backend
-    runtime: python
-    region: singapore   # or oregon/frankfurt
+    env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      PYTHONUNBUFFERED: true
-      PORT: 8000
-    plan: free
+    autoDeploy: true
+
