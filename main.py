@@ -137,18 +137,30 @@ def list_ingredients():
 @app.post("/api/recipes/match")
 def match_recipes(req: MatchRequest):
 
-    user_ingredients = " ".join([i.lower().strip() for i in req.ingredients])
-    if not user_ingredients:
-        return {"matches": []}
-
-    user_vec = text_to_vector(user_ingredients)
+    user_items = [i.lower().strip() for i in req.ingredients]
+    user_set = set(user_items)
 
     results = []
 
     for r in RECIPES:
-        score = cosine_similarity(user_vec, r["vec"])
+        recipe_ingredients = [ing.lower().strip() for ing in r.get("ingredients", [])]
 
-        if score > 0.05:
+        recipe_set = set(recipe_ingredients)
+
+        # Count matches
+        matched = user_set.intersection(recipe_set)
+        missing = recipe_set - user_set
+
+        has_count = len(matched)
+        total_count = len(recipe_set)
+
+        if total_count == 0:
+            continue
+
+        # Correct match percentage
+        match_percentage = int((has_count / total_count) * 100)
+
+        if match_percentage > 0:
             results.append({
                 "id": r["id"],
                 "title": r.get("title"),
@@ -156,9 +168,12 @@ def match_recipes(req: MatchRequest):
                 "note": r.get("note", ""),
                 "ingredients": r.get("ingredients", []),
                 "instructions": r.get("instructions", []),
-                "matchPercentage": int(score * 100)
+                "hasIngredients": list(matched),
+                "missingIngredients": list(missing),
+                "matchPercentage": match_percentage
             })
 
+    # Sort by highest match %
     results.sort(key=lambda x: x["matchPercentage"], reverse=True)
 
     return {"matches": results}
