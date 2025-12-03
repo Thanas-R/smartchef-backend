@@ -172,7 +172,8 @@ class MatchRequest(BaseModel):
 # ------------------------
 # QUERY VECTOR + SIM
 # ------------------------
-def map_user_tokens_with_fuzzy(user_items: List[str], available_terms: List[str], cutoff: float = 0.75) -> List[str]:
+cutoff = 0.8 if len(raw_items) <= 3 else 0.7 
+user_mapped = map_user_tokens_with_fuzzy(raw_items, list(KNOWN_TERMS), cutoff=cutoff)
     """
     Map user's typed ingredients to normalized tokens.
     Uses difflib.get_close_matches to fix typos (e.g. 'panner' -> 'paneer').
@@ -323,3 +324,4 @@ async def api_recompute_index():
     INGREDIENTS = load_ingredients()
     build_tfidf_index(RECIPES)
     return {"status": "ok", "recipes": len(RECIPES)}
+
